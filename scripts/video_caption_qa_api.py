@@ -55,7 +55,8 @@ def extract_captions(video_path, video_id, interval=10):
     captions = []
     processed_secs = set()
     segments = [(sec, video_path, video_id) for sec in range(0, int(duration), interval)]
-    with ProcessPoolExecutor() as executor:
+    # Limit number of workers to avoid too many open files/processes
+    with ProcessPoolExecutor(max_workers=4) as executor:
         futures = {executor.submit(process_frame, args): args[0] for args in segments}
         for future in as_completed(futures):
             result = future.result()
@@ -146,9 +147,11 @@ async def chat(
     message: str = Form(...),
     session_id: str = Form(...)
 ):
+    print(f"[CHAT] Received request: video_id={video_id}, message={message}, session_id={session_id}")
     # Load captions
     captions_path = f"{FRAME_DIR}/{video_id}_captions.json"
     if not os.path.exists(captions_path):
+        print(f"[CHAT] Captions not ready for video_id={video_id}")
         return JSONResponse(content={"error": "Captions not ready yet."}, status_code=400)
     with open(captions_path, "r") as f:
         captions = json.load(f)
@@ -163,8 +166,10 @@ async def chat(
     for turn in chat_histories[session_id]:
         full_prompt += f"{turn['role']}: {turn['content']}\n"
     full_prompt += "assistant:"
+    print(f"[CHAT] Sending prompt to Llama: {full_prompt[:200]}... (truncated)")
     # Get LLM response
     response = llm(full_prompt, max_tokens=256, stop=["user:", "assistant:"])
     answer = response["choices"][0]["text"].strip()
+    print(f"[CHAT] Llama response: {answer}")
     chat_histories[session_id].append({"role": "assistant", "content": answer})
     return JSONResponse(content={"answer": answer, "history": chat_histories[session_id]})
