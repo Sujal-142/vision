@@ -11,6 +11,7 @@ import json
 from PIL import Image
 from transformers import BlipProcessor, BlipForConditionalGeneration
 from llama_cpp import Llama
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 app = FastAPI()
 UPLOAD_DIR = "uploads"
@@ -29,29 +30,41 @@ llm = Llama(model_path="llama-2-7b-chat.ggmlv3.q4_0.bin")
 # Store chat history in memory (for demo)
 chat_histories = {}
 
+def process_frame(args):
+    sec, video_path, video_id = args
+    vidcap = cv2.VideoCapture(video_path)
+    vidcap.set(cv2.CAP_PROP_POS_MSEC, sec * 1000)
+    success, image = vidcap.read()
+    caption = None
+    if success:
+        frame_path = os.path.join(FRAME_DIR, f"{video_id}_frame_{sec}.jpg")
+        cv2.imwrite(frame_path, image)
+        pil_image = Image.open(frame_path).convert("RGB")
+        inputs = blip_processor(pil_image, return_tensors="pt")
+        out = blip_model.generate(**inputs)
+        caption = blip_processor.decode(out[0], skip_special_tokens=True)
+    vidcap.release()
+    return {"timestamp": sec, "caption": caption} if caption else None
+
 def extract_captions(video_path, video_id, interval=10):
     vidcap = cv2.VideoCapture(video_path)
     fps = vidcap.get(cv2.CAP_PROP_FPS)
     frame_count = int(vidcap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = frame_count / fps
+    vidcap.release()
     captions = []
     processed_secs = set()
-    for sec in range(0, int(duration), interval):
-        vidcap.set(cv2.CAP_PROP_POS_MSEC, sec * 1000)
-        success, image = vidcap.read()
-        if success:
-            frame_path = os.path.join(FRAME_DIR, f"{video_id}_frame_{sec}.jpg")
-            cv2.imwrite(frame_path, image)
-            pil_image = Image.open(frame_path).convert("RGB")
-            inputs = blip_processor(pil_image, return_tensors="pt")
-            out = blip_model.generate(**inputs)
-            caption = blip_processor.decode(out[0], skip_special_tokens=True)
-            captions.append({"timestamp": sec, "caption": caption})
-            processed_secs.add(sec)
-            # Save progress after each frame
-            with open(f"{FRAME_DIR}/{video_id}_captions.json", "w") as f:
-                json.dump(captions, f)
-    vidcap.release()
+    segments = [(sec, video_path, video_id) for sec in range(0, int(duration), interval)]
+    with ProcessPoolExecutor() as executor:
+        futures = {executor.submit(process_frame, args): args[0] for args in segments}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                captions.append(result)
+                processed_secs.add(result["timestamp"])
+                # Save progress after each frame
+                with open(f"{FRAME_DIR}/{video_id}_captions.json", "w") as f:
+                    json.dump(captions, f)
     # Final save (in case last frame wasn't saved)
     with open(f"{FRAME_DIR}/{video_id}_captions.json", "w") as f:
         json.dump(captions, f)
