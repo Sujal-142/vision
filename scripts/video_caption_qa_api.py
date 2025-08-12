@@ -25,7 +25,7 @@ blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning
 blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
 
 # Load Llama 2 (7B) for Q&A (make sure to download weights and set path)
-llm = Llama(model_path="llama-2-7b-chat.ggmlv3.q4_0.bin")
+llm = Llama(model_path="llama-2-7b-chat.Q4_K_M.gguf")
 
 # Store chat history in memory (for demo)
 chat_histories = {}
