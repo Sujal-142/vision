@@ -3,3 +3,6 @@ uvicorn
 opencv-python
 ultralytics
 python-multipart
+transformers
+Pillow
+llama-cpp-python
